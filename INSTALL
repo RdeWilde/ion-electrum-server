@@ -8,10 +8,21 @@ $ sudo python ./setup.py install
 $ electrum-server start
 $ electrum-server stop
 
+May need this too:
+$ sudo apt-get install libleveldb-dev
+or
+$ sudo yum install leveldb-devel
+
+And:
+$ sudo apt-get install python-pip
+$ pip install --upgrade pip
+$ pip install ecdsa
+$ pip install slowaes
 
 Note: If you want to run the server without installing it on your
 system, just run 'run_electrum_server"
-
+or
+$ sudo -H -u electrum ./run_electrum_server.py
 
 1. Install and run bitcoind.
 ----------------------------
