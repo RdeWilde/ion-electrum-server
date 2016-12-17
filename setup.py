@@ -4,7 +4,15 @@ setup(
     name="electrum-server",
     version="1.0",
     scripts=['run_electrum_server.py','electrum-server'],
-    install_requires=['plyvel','jsonrpclib', 'irc >= 11, <=14.0'],
+    install_requires=[
+        'plyvel',
+        'jsonrpclib',
+        'irc >= 11, <=14.0',
+        'x11_hash>=1.4'
+    ],
+    dependency_links=[
+        'git+https://github.com/mazaclub/x11_hash@1.4#egg=x11_hash-1.4'
+    ],
     package_dir={
         'electrumserver':'src'
         },

@@ -2,4 +2,9 @@
 *.so
 *.o
 .gitignore
+.idea/
 electrum.conf
+/electrum-ion.conf
+/build/
+/dist/
+/electrum_server.egg-info/

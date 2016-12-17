@@ -6,10 +6,24 @@ import mmap
 import string
 import struct
 import types
+import time
+from processor import print_log
 
 from utils import hash_160_to_pubkey_address, hash_160_to_script_address, public_key_to_pubkey_address, hash_encode,\
-    hash_160
+    hash_160, Hash
 
+import bitcoin
+from bitcoin import *
+import sys
+
+#
+# Workalike python implementation of Bitcoin's CDataStream class.
+#
+import struct
+import StringIO
+import random
+
+NO_SIGNATURE = 'ff'
 
 class SerializationError(Exception):
     """Thrown when there's a problem deserializing or serializing."""
@@ -94,6 +108,9 @@ class BCDataStream(object):
 
     def read_uint64(self):
         return self._read_num('<Q')
+
+    def read_uint256(self):
+        return self.read(32)[::-1]
 
     def write_boolean(self, val):
         return self.write(chr(1) if val else chr(0))
@@ -212,17 +229,46 @@ def short_hex(bytes):
 
 def parse_TxIn(vds):
     d = {}
-    d['prevout_hash'] = hash_encode(vds.read_bytes(32))
-    d['prevout_n'] = vds.read_uint32()
-    scriptSig = vds.read_bytes(vds.read_compact_size())
-    d['sequence'] = vds.read_uint32()
+    # TransactionOutpoint parse
+    prevout_hash = hash_encode(vds.read_bytes(32))
+    prevout_n = vds.read_uint32()
+
+    # TransactionInput parse
+    scriptLen = vds.read_compact_size()
+    if scriptLen > 0:
+        scriptSig = vds.read_bytes(scriptLen)
+    else:
+        scriptSig = None
+
+    d['scriptSig'] = scriptSig.encode('hex')
+
+    # TODO kMaxSquenceNumber ((0x1ull << 56) - 1)
+    #if prevout_n > 0 and prevout_n < 999999:
+    sequence = vds.read_uint32()
+    #else:
+    #    sequence = None
+
+    if prevout_hash == '00'*32:
+        d['is_coinbase'] = True
+    else:
+        d['is_coinbase'] = False
+        d['prevout_hash'] = prevout_hash
+        d['prevout_n'] = prevout_n
+        d['sequence'] = sequence
+        d['pubkeys'] = []
+        d['signatures'] = {}
+        d['address'] = None
+        if scriptSig:
+            parse_scriptSig(d, scriptSig)
+
     return d
 
 
 def parse_TxOut(vds, i):
     d = {}
     d['value'] = vds.read_int64()
-    scriptPubKey = vds.read_bytes(vds.read_compact_size())
+    scriptLen = vds.read_compact_size()
+    scriptPubKey = vds.read_bytes(scriptLen)
     d['address'] = get_address_from_output_script(scriptPubKey)
     d['raw_output_script'] = scriptPubKey.encode('hex')
     d['index'] = i
@@ -233,12 +279,14 @@ def parse_Transaction(vds, is_coinbase):
     d = {}
     start = vds.read_cursor
     d['version'] = vds.read_int32()
+    d['time'] = vds.read_int32()
     n_vin = vds.read_compact_size()
     d['inputs'] = []
     for i in xrange(n_vin):
         o = parse_TxIn(vds)
-        if not is_coinbase:
+        if not o['is_coinbase']: # of huidige is_coinbase?
             d['inputs'].append(o)
+
     n_vout = vds.read_compact_size()
     d['outputs'] = []
     for i in xrange(n_vout):
@@ -331,6 +379,47 @@ def match_decoded(decoded, to_match):
 
 
 
+def get_address_from_input_script(bytes):
+    try:
+        decoded = [ x for x in script_GetOp(bytes) ]
+    except:
+        # coinbase transactions raise an exception
+        return [], [], None
+    # non-generated TxIn transactions push a signature
+    # (seventy-something bytes) and then their public key
+    # (33 or 65 bytes) onto the stack:
+
+    match = [ opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4 ]
+    if match_decoded(decoded, match):
+        return None, None, public_key_to_pubkey_address(decoded[1][1])
+
+    # p2sh transaction, 2 of n
+    match = [ opcodes.OP_0 ]
+    while len(match) < len(decoded):
+        match.append(opcodes.OP_PUSHDATA4)
+
+    if match_decoded(decoded, match):
+
+        redeemScript = decoded[-1][1]
+        num = len(match) - 2
+        signatures = map(lambda x:x[1].encode('hex'), decoded[1:-1])
+        dec2 = [ x for x in script_GetOp(redeemScript) ]
+
+        # 2 of 2
+        match2 = [ opcodes.OP_2, opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4, opcodes.OP_2, opcodes.OP_CHECKMULTISIG ]
+        if match_decoded(dec2, match2):
+            pubkeys = [ dec2[1][1].encode('hex'), dec2[2][1].encode('hex') ]
+            return pubkeys, signatures, hash_160_to_script_address(hash_160(redeemScript))
+
+        # 2 of 3
+        match2 = [ opcodes.OP_2, opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4, opcodes.OP_3, opcodes.OP_CHECKMULTISIG ]
+        if match_decoded(dec2, match2):
+            pubkeys = [ dec2[1][1].encode('hex'), dec2[2][1].encode('hex'), dec2[3][1].encode('hex') ]
+            return pubkeys, signatures, hash_160_to_script_address(hash_160(redeemScript))
+
+    return [], [], None
+
+
 def get_address_from_output_script(bytes):
     try:
         decoded = [ x for x in script_GetOp(bytes) ]
@@ -367,3 +456,119 @@ def get_address_from_output_script(bytes):
         return addr
 
     return None
+
+
+def parse_scriptSig(d, bytes):
+    try:
+        decoded = [ x for x in script_GetOp(bytes) ]
+    except Exception:
+        # coinbase transactions raise an exception
+        print_log("cannot find address in input script 1 ", bytes.encode('hex'))
+        return
+
+    # payto_pubkey
+    match = [ opcodes.OP_PUSHDATA4 ]
+    if match_decoded(decoded, match):
+        sig = decoded[0][1].encode('hex')
+        d['address'] = "(pubkey)"
+        d['signatures'] = [sig]
+        d['num_sig'] = 1
+        d['x_pubkeys'] = ["(pubkey)"]
+        d['pubkeys'] = ["(pubkey)"]
+        return
+
+    # non-generated TxIn transactions push a signature
+    # (seventy-something bytes) and then their public key
+    # (65 bytes) onto the stack:
+    match = [ opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4 ]
+    if match_decoded(decoded, match):
+        sig = decoded[0][1].encode('hex')
+        x_pubkey = decoded[1][1].encode('hex')
+        try:
+            signatures = parse_sig([sig])
+            pubkey, address = parse_xpub(x_pubkey)
+        except:
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            print_log("cannot find address in input script 2 ", bytes.encode('hex'))
+            return
+        d['signatures'] = signatures
+        d['x_pubkeys'] = [x_pubkey]
+        d['num_sig'] = 1
+        d['pubkeys'] = [pubkey]
+        d['address'] = address
+        return
+
+    # p2sh transaction, m of n
+    match = [ opcodes.OP_0 ] + [ opcodes.OP_PUSHDATA4 ] * (len(decoded) - 1)
+    if not match_decoded(decoded, match):
+        #print_log("cannot find address in input script 3 ", bytes.encode('hex'), decoded, match)
+        return
+
+    x_sig = [x[1].encode('hex') for x in decoded[1:-1]]
+    dec2 = [ x for x in script_GetOp(decoded[-1][1]) ]
+    m = dec2[0][0] - opcodes.OP_1 + 1
+    n = dec2[-2][0] - opcodes.OP_1 + 1
+    op_m = opcodes.OP_1 + m - 1
+    op_n = opcodes.OP_1 + n - 1
+    match_multisig = [ op_m ] + [opcodes.OP_PUSHDATA4]*n + [ op_n, opcodes.OP_CHECKMULTISIG ]
+
+    if not match_decoded(dec2, match_multisig):
+        print_log("cannot find address in input script 4", bytes.encode('hex'))
+        return
+    x_pubkeys = map(lambda x: x[1].encode('hex'), dec2[1:-2])
+    pubkeys = [parse_xpub(x)[0] for x in x_pubkeys]     # xpub, addr = parse_xpub()
+    redeemScript = Transaction.multisig_script(pubkeys, m)
+    # write result in d
+    d['num_sig'] = m
+    d['signatures'] = parse_sig(x_sig)
+    d['x_pubkeys'] = x_pubkeys
+    d['pubkeys'] = pubkeys
+    d['redeemScript'] = redeemScript
+    d['address'] = hash_160_to_bc_address(hash_160(redeemScript.decode('hex')), bitcoin.SCRIPT_ADDR)
+
+
+
+
+def parse_sig(x_sig):
+    s = []
+    for sig in x_sig:
+        if sig[-2:] == '01':
+            s.append(sig[:-2])
+        else:
+            assert sig == NO_SIGNATURE
+            s.append(None)
+    return s
+
+def is_extended_pubkey(x_pubkey):
+    return x_pubkey[0:2] in ['fe', 'ff']
+
+def x_to_xpub(x_pubkey):
+    if x_pubkey[0:2] == 'ff':
+        from account import BIP32_Account
+        xpub, s = BIP32_Account.parse_xpubkey(x_pubkey)
+        return xpub
+
+
+def parse_xpub(x_pubkey):
+    if x_pubkey[0:2] in ['02','03','04']:
+        pubkey = x_pubkey
+    elif x_pubkey[0:2] == 'ff':
+        from account import BIP32_Account
+        xpub, s = BIP32_Account.parse_xpubkey(x_pubkey)
+        pubkey = BIP32_Account.derive_pubkey_from_xpub(xpub, s[0], s[1])
+    elif x_pubkey[0:2] == 'fe':
+        from account import OldAccount
+        mpk, s = OldAccount.parse_xpubkey(x_pubkey)
+        pubkey = OldAccount.get_pubkey_from_mpk(mpk.decode('hex'), s[0], s[1])
+    elif x_pubkey[0:2] == 'fd':
+        addrtype = ord(x_pubkey[2:4].decode('hex'))
+        hash160 = x_pubkey[4:].decode('hex')
+        pubkey = None
+        address = hash_160_to_bc_address(hash160, addrtype)
+    else:
+        raise BaseException("Cannnot parse pubkey")
+    if pubkey:
+        address = public_key_to_bc_address(pubkey.decode('hex'))
+    return pubkey, address
+

@@ -295,7 +295,7 @@ class BlockchainProcessor(Processor):
         try:
             return deserialize.parse_Transaction(vds, is_coinbase=False)
         except:
-            print_log("ERROR: cannot parse", txid)
+            print_log("ERROR: cannot parse 2 ", txid)
             return None
 
     def get_unconfirmed_history(self, addr):
