@@ -160,7 +160,6 @@ class BlockchainProcessor(Processor):
                 r = load(response)
                 response.close()
             except:
-                print_log("cannot reach bitcoind...")
                 self.wait_on_bitcoind()
             else:
                 if r['error'] is not None:
@@ -594,7 +593,8 @@ class BlockchainProcessor(Processor):
 
         elif method == 'blockchain.estimatefee':
             num = int(params[0])
-            result = self.bitcoind('estimatefee', (num,))
+            result = num * 0.01
+            #result = self.bitcoind('estimatefee', (num,)) # TODO FIXME
 
         elif method == 'blockchain.relayfee':
             result = self.relayfee
@@ -652,7 +652,7 @@ class BlockchainProcessor(Processor):
         while not self.shared.stopped():
             # are we done yet?
             info = self.bitcoind('getinfo')
-            self.relayfee = info.get('relayfee')
+            self.relayfee = info.get('paytxfee')
             self.bitcoind_height = info.get('blocks')
             bitcoind_block_hash = self.bitcoind('getblockhash', (self.bitcoind_height,))
             if self.storage.last_hash == bitcoind_block_hash:
