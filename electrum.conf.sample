@@ -10,10 +10,10 @@ electrum_rpc_port = 8000
 #report_host = 
 #report_stratum_tcp_port = 50001
 #report_stratum_tcp_ssl_port = 50002
-password = secret
+#password = secret
 banner = Welcome to Electrum!
 banner_file = /etc/electrum.banner
-#irc = no
+irc = no
 #irc_nick = <yournickname>
 #irc_bind_ip = <external ip address>
 #ssl_certfile = /path/to/electrum-server.crt
@@ -38,7 +38,7 @@ type = ion_main
 
 [bitcoind]
 bitcoind_host = localhost
-bitcoind_port = 59273
+bitcoind_port = 12705
 # user and password from bitcoin.conf
 bitcoind_user = 
 bitcoind_password = 
