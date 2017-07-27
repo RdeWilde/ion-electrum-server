@@ -4,7 +4,7 @@ params = {
     'ion_main': {
         'pubkey_address': 103,
         'script_address': 88,
-        'genesis_hash': '000001a7bb3214e3e1d2e4c256082b817a3c5dff5def37456ae16d7edaa508be'
+        'genesis_hash': '0000004cf5ffbf2e31a9aa07c86298efb01a30b8911b80af7473d1114715084b'
     },
     'ion_test': {
         'pubkey_address': 127,
